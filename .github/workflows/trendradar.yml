@@ -1,0 +1,58 @@
+name: TrendRadar 舆情监控
+
+on:
+  schedule:
+    # 北京时间 每周一/三 08:00 运行（UTC+8 = UTC 00:00）
+    - cron: '0 0 * * 1,3'
+  workflow_dispatch:  # 支持手动触发测试
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      # 从 GitHub Secrets 读取 WxPuser 密钥
+      WXPUSHER_APP_TOKEN: ${{ secrets.WXPUSHER_APP_TOKEN }}
+      WXPUSHER_UID: ${{ secrets.WXPUSHER_UID }}
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v3
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 替换 WxPuser 密钥到 config.yaml
+        run: |
+          python -c "
+          import yaml, os
+          with open('config/config.yaml', 'r', encoding='utf-8') as f:
+              cfg = yaml.safe_load(f)
+          token = os.environ['WXPUSHER_APP_TOKEN']
+          uid = os.environ['WXPUSHER_UID']
+          tpl = cfg['notification']['channels']['generic_webhook']['payload_template']
+          tpl = tpl.replace('WXPUSHER_TOKEN_PLACEHOLDER', token)
+          tpl = tpl.replace('WXPUSHER_UID_PLACEHOLDER', uid)
+          cfg['notification']['channels']['generic_webhook']['payload_template'] = tpl
+          with open('config/config.yaml', 'w', encoding='utf-8') as f:
+              yaml.dump(cfg, f, allow_unicode=True)
+          print('✅ config.yaml 密钥注入完成')
+          "
+
+      - name: 运行 TrendRadar 采集+推送
+        run: python main.py
+
+      - name: 提交运行时数据（保留去重用）
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add output/ || true
+          git commit -m 'chore: update runtime data' || echo 'no changes to commit'
+          git push || echo 'no changes to push'
